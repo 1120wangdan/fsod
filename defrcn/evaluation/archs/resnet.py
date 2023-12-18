@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from torch.hub import load_state_dict_from_url
 
+#resnet网络，有两种残差结构，实线和虚线的是主分支和残差块的输出深度调整一致
 
 __all__ = ['ResNet', 'resnet18', 'resnet34', 'resnet50', 'resnet101',
            'resnet152', 'resnext50_32x4d', 'resnext101_32x8d',
@@ -149,7 +150,7 @@ class ResNet(nn.Module):
         self.layer4 = self._make_layer(block, 512, layers[3], stride=2,
                                        dilate=replace_stride_with_dilation[2])
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.fc = nn.Linear(512 * block.expansion, num_classes) 
 
         for m in self.modules():
             if isinstance(m, nn.Conv2d):

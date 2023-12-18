@@ -5,8 +5,8 @@ import datetime
 from collections import OrderedDict
 from contextlib import contextmanager
 from detectron2.utils.comm import is_main_process
-from .calibration_layer import PrototypicalCalibrationBlock
 
+from defrcn.evaluation.calibration_layer14_10 import PrototypicalCalibrationBlock    
 
 class DatasetEvaluator:
     """
@@ -91,14 +91,14 @@ def inference_on_dataset(model, data_loader, evaluator, cfg=None):
 
     logger.info("Start inference on {} images".format(len(data_loader)))
     total = len(data_loader)  # inference data loader must have a fixed length
-    evaluator.reset()
+    evaluator.reset()   
 
     logging_interval = 50
     num_warmup = min(5, logging_interval - 1, total - 1)
     start_time = time.time()
     total_compute_time = 0
     with inference_context(model), torch.no_grad():
-        for idx, inputs in enumerate(data_loader):
+        for idx, inputs in enumerate(data_loader):    #循环遍历每个样本
             if idx == num_warmup:
                 start_time = time.time()
                 total_compute_time = 0
@@ -106,6 +106,7 @@ def inference_on_dataset(model, data_loader, evaluator, cfg=None):
             start_compute_time = time.time()
             outputs = model(inputs)
             if cfg.TEST.PCB_ENABLE:
+                #outputs是HEAD的输出结果
                 outputs = pcb.execute_calibration(inputs, outputs)
             torch.cuda.synchronize()
             total_compute_time += time.time() - start_compute_time

@@ -33,7 +33,6 @@ class PrototypicalCalibrationBlock:
         self.alpha = self.cfg.TEST.PCB_ALPHA
 
         self.imagenet_model = self.build_model()
-        # Detectron2 库提供的一个函数，用于构建目标检测任务的测试数据加载器。该函数接受两个参数，一个是配置对象 self.cfg，另一个是要加载的数据集的名称。
         self.dataloader = build_detection_test_loader(self.cfg, self.cfg.DATASETS.TRAIN[0])
         #debug改成了1到3
         self.roi_pooler = ROIPooler(output_size=(3, 3), scales=(1 / 32,), sampling_ratio=(0), pooler_type="ROIAlignV2")
@@ -105,10 +104,10 @@ class PrototypicalCalibrationBlock:
             features_dict[label].append(all_features[i].unsqueeze(0))  
             # 将特征张量列表转换为张量
 
-        num_classes = len(features_dict)  # 类别的数量
-        num_prototype=10
-        in_channels=2048
-        prototypes = torch.zeros(num_classes, num_prototype, in_channels)  # 事先定义好的原型张量
+        # num_classes = len(features_dict)  # 类别的数量
+        # num_prototype=5
+        # in_channels=2048
+        #prototypes = torch.zeros(num_classes, num_prototype, in_channels)  # 事先定义好的原型张量
 
         index_to_label = {}  # 建立索引和类别标签之间的映射关系
         prototypes = {}
@@ -227,7 +226,7 @@ class PrototypicalCalibrationBlock:
             for k in range(9):
                 cos_sim_list = []
                 for label, prototypes_list in self.prototypes.items():
-                    for j in range(10):
+                    for j in range(5):
                         cos_sim = cosine_similarity(
                             np.reshape(features[i - ileft].reshape(9, 2048)[k].cpu().data.numpy(), (1, -1)),
                             np.reshape(prototypes_list[j].cpu().data.numpy(), (1, -1))
@@ -238,7 +237,7 @@ class PrototypicalCalibrationBlock:
 
                 max_sim = max(cos_sim_list)
                 max_sim_index = cos_sim_list.index(max_sim)
-                max_sim_label = list(self.prototypes.keys())[max_sim_index // 10]
+                max_sim_label = list(self.prototypes.keys())[max_sim_index // 5]
 
                 similarity_scores.append(max_sim)
                 similarity_labels.append(max_sim_label)
@@ -267,6 +266,8 @@ class PrototypicalCalibrationBlock:
             # 将分类结果和分类得分记录下来
             dts[0]['instances'].pred_classes[i] = most_frequent_label  # 取出现次数最多的第一个类别作为预测结果
             dts[0]['instances'].scores[i] = average_similarity
+            
+ 
         return dts
 
     #根据数据集名称返回一组需要排除的类别 ID 
@@ -315,7 +316,7 @@ def momentum_update(old_value, new_value, momentum, debug=False):
 #_c是同一个类的roi_feature,b c h w
 def prototype_learning(_c):
      in_channels = 2048
-     num_prototype = 10
+     num_prototype = 5
      protos = torch.zeros(num_prototype, in_channels)
      old_protos = torch.zeros(num_prototype, in_channels)
                                        

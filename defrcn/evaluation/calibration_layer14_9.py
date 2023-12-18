@@ -33,7 +33,6 @@ class PrototypicalCalibrationBlock:
         self.alpha = self.cfg.TEST.PCB_ALPHA
 
         self.imagenet_model = self.build_model()
-        # Detectron2 库提供的一个函数，用于构建目标检测任务的测试数据加载器。该函数接受两个参数，一个是配置对象 self.cfg，另一个是要加载的数据集的名称。
         self.dataloader = build_detection_test_loader(self.cfg, self.cfg.DATASETS.TRAIN[0])
         #debug改成了1到3
         self.roi_pooler = ROIPooler(output_size=(3, 3), scales=(1 / 32,), sampling_ratio=(0), pooler_type="ROIAlignV2")
@@ -105,12 +104,12 @@ class PrototypicalCalibrationBlock:
             features_dict[label].append(all_features[i].unsqueeze(0))  
             # 将特征张量列表转换为张量
 
-        num_classes = len(features_dict)  # 类别的数量
-        num_prototype=10
-        in_channels=2048
-        prototypes = torch.zeros(num_classes, num_prototype, in_channels)  # 事先定义好的原型张量
+        # num_classes = len(features_dict)  # 类别的数量
+        # num_prototype=10
+        # in_channels=2048
+        # prototypes = torch.zeros(num_classes, num_prototype, in_channels)  # 事先定义好的原型张量
 
-        index_to_label = {}  # 建立索引和类别标签之间的映射关系
+        # index_to_label = {}  # 建立索引和类别标签之间的映射关系
         prototypes = {}
 # 遍历字典中的每个类别
         for k, label in enumerate(features_dict):
@@ -127,8 +126,8 @@ class PrototypicalCalibrationBlock:
             # prototypes[k] = prototype   每一类的原型是10，2048
             prototypes[label] = prototype
             
-            # 建立索引和类别标签之间的映射关系
-            index_to_label[k] = label
+            # # 建立索引和类别标签之间的映射关系
+            # index_to_label[k] = label
 
 
 
@@ -169,44 +168,37 @@ class PrototypicalCalibrationBlock:
         
 
         box_features = self.roi_pooler([conv_feature], boxes) #移除指定维度
+        a = box_features.size(0)
+        box_features = box_features.view(a, 2048, 9)
 
-        # activation_vectors = self.imagenet_model.fc(box_features)
+        activation_vectors = torch.zeros(a,1000, 9)
 
-        return box_features    
+        # 遍历box_features中的每个向量
+        for i in range(box_features.size(2)):
+            # 获取当前向量
+            # vector = box_features[i]
+            # print(i)
+            vector = box_features[:, :, i]
+         
+            
+            # 将向量通过全连接层
+            output = self.imagenet_model.fc(vector)
+            # print(output)
+            activation_vectors[:, :, i]=output
+            # 将输出添加到activation_vectors列表中
+
+        activation_vectors_final = activation_vectors.reshape(a,1000, 3, 3)
+        
+
+        return activation_vectors_final   
 
 
-
-    # def extract_roi_features_vector(self, img, boxes):
-    #         """
-    #         :param img:
-    #         :param boxes:
-    #         :return:
-    #         """
-
-    #         mean = torch.tensor([0.406, 0.456, 0.485]).reshape((3, 1, 1)).to(self.device)
-    #         std = torch.tensor([[0.225, 0.224, 0.229]]).reshape((3, 1, 1)).to(self.device)
-
-    #         img = img.transpose((2, 0, 1))
-    #         img = torch.from_numpy(img).to(self.device)
-    #         images = [(img / 255. - mean) / std]  
-    #         images = ImageList.from_tensors(images, 0)
-
-    #         #卷积特征-ROI特征-ROI特征向量
-    #         conv_feature = self.imagenet_model(images.tensor[:, [2, 1, 0]])[1]  # size: BxCxHxW
-    #         # box_features = self.roi_pooler([conv_feature], boxes)
-
-    #         #移除指定维度
-    #         box_features = self.roi_pooler1([conv_feature], boxes).squeeze(2).squeeze(2) 
-
-    #         # activation_vectors = self.imagenet_model.fc(box_features)
-
-    #         return box_features  
     
      #PCB执行，求相似度、
      #extract_roi_features(img, boxes)的两个参数，一个来自原始图像，一个来自预测的候选框
      #dts是检测结果列表
  
-    def execute_calibration(self, inputs, dts):
+    def execute_calibration(self, inputs, dts): 
         img = cv2.imread(inputs[0]['file_name'])   # BGR 格式的图像
 
         ileft = (dts[0]['instances'].scores > self.cfg.TEST.PCB_UPPER).sum()
@@ -218,18 +210,19 @@ class PrototypicalCalibrationBlock:
         
         #i是框的索引吗 原论文也只和自己对应的类求相似度 
         for i in range(ileft, iright):
-            # tmp_class = int(dts[0]['instances'].pred_classes[i])
-            # if tmp_class in self.exclude_cls:
-            #     continue 
+            tmp_class = int(dts[0]['instances'].pred_classes[i])
+            if tmp_class in self.exclude_cls:
+                continue 
+           
             similarity_scores = []
             similarity_labels = []
 
             for k in range(9):
                 cos_sim_list = []
                 for label, prototypes_list in self.prototypes.items():
-                    for j in range(10):
+                    for j in range(9):
                         cos_sim = cosine_similarity(
-                            np.reshape(features[i - ileft].reshape(9, 2048)[k].cpu().data.numpy(), (1, -1)),
+                            np.reshape(l2_normalize_(features[i - ileft].reshape(1000,9)[:,k].cpu().data.numpy()), (1, -1)),
                             np.reshape(prototypes_list[j].cpu().data.numpy(), (1, -1))
                         )[0][0]
                         cos_sim_list.append(cos_sim)
@@ -238,7 +231,7 @@ class PrototypicalCalibrationBlock:
 
                 max_sim = max(cos_sim_list)
                 max_sim_index = cos_sim_list.index(max_sim)
-                max_sim_label = list(self.prototypes.keys())[max_sim_index // 10]
+                max_sim_label = list(self.prototypes.keys())[max_sim_index // 9]
 
                 similarity_scores.append(max_sim)
                 similarity_labels.append(max_sim_label)
@@ -259,8 +252,10 @@ class PrototypicalCalibrationBlock:
             most_frequent_label = [label for label, count in label_counts.items() if count == max_count][0]
 
             # 筛选出现次数最多的相似度
-            most_frequent_scores = [score for score, label in zip(similarity_scores, similarity_labels) if label in most_frequent_label]
+            most_frequent_label_ = [most_frequent_label]  # 将 most_frequent_label 转换为列表
+            most_frequent_scores = [score for score, label in zip(similarity_scores, similarity_labels) if label in most_frequent_label_]
 
+            
             # 计算平均相似度
             average_similarity = sum(most_frequent_scores) / len(most_frequent_scores)
 
@@ -301,6 +296,9 @@ def concat_all_gather(tensor):
 
 def l2_normalize(x):
     return F.normalize(x, p=2, dim=-1)
+def l2_normalize_(vector):
+    norm = np.linalg.norm(vector)
+    return vector / norm if norm != 0 else vector
 
 def momentum_update(old_value, new_value, momentum, debug=False):
     update = momentum * old_value + (1 - momentum) * new_value
@@ -312,22 +310,21 @@ def momentum_update(old_value, new_value, momentum, debug=False):
 #函数的输入out是 N个像素点在K类上的相似度，相当于是代价矩阵，正则化参数，迭代次数
 
 
-#_c是同一个类的roi_feature,b c h w
 def prototype_learning(_c):
-     in_channels = 2048
-     num_prototype = 10
+     in_channels = 1000
+     num_prototype = 9
      protos = torch.zeros(num_prototype, in_channels)
      old_protos = torch.zeros(num_prototype, in_channels)
                                        
-     dim_in=_c.size(1)
-     proj_head  = nn.Sequential(
-            nn.Conv2d(dim_in, dim_in, 1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(dim_in, in_channels, 1))
-     feat_norm = nn.LayerNorm(in_channels)
-     c = proj_head(_c)
-     _c = rearrange(c, 'b c h w -> (b h w) c')
-     _c = feat_norm(_c)
+    #  dim_in=_c.size(1)
+    #  proj_head  = nn.Sequential(
+    #         nn.Conv2d(dim_in, dim_in, 1),
+    #         nn.ReLU(inplace=True),
+    #         nn.Conv2d(dim_in, in_channels, 1))
+    #  feat_norm = nn.LayerNorm(in_channels)
+    #  c = proj_head(_c)
+     _c = rearrange(_c, 'b c h w -> (b h w) c')
+    #  _c = feat_norm(_c)
      _c = l2_normalize(_c) 
      old_protos.data.copy_(l2_normalize(protos))
     
@@ -335,13 +332,10 @@ def prototype_learning(_c):
      q, indexs = distributed_sinkhorn(scores) 
      f = q.transpose(0, 1) @ _c
      f = F.normalize(f, p=2, dim=-1)
-     
-   
-
      new_value = momentum_update(old_value=old_protos, new_value=f,
                                             momentum=0.9, debug=False)
-     protos = new_value
-     return protos   #原型是10，2048
+     protos = l2_normalize(new_value)
+     return protos   #原型是9，2048
 
 def distributed_sinkhorn(out, sinkhorn_iterations=3, epsilon=0.05):
     #初始化分配矩阵
@@ -384,3 +378,36 @@ def distributed_sinkhorn(out, sinkhorn_iterations=3, epsilon=0.05):
     # print(b)
 
     return L, indexs
+
+def naive_bayesian_fusion(predictions_model_A, predictions_model_B):
+    # 计算每个模型的概率分布（假设已经归一化）
+    prob_model_A = predictions_model_A / np.sum(predictions_model_A)
+    prob_model_B = predictions_model_B / np.sum(predictions_model_B)
+
+    # 朴素贝叶斯融合的权重，可以根据实际情况进行调整 
+    weight_model_A = 0.6  
+    weight_model_B = 0.4  
+
+    # 使用朴素贝叶斯融合的权重计算融合后的概率分布
+    fused_prob = weight_model_A * prob_model_A + weight_model_B * prob_model_B
+
+    return fused_prob 
+
+
+def bayesian_fusion_probability_vector(prob_vector_A, prob_vector_B, weight_A, weight_B):
+    # 贝叶斯融合公式
+    fused_probability_vector = (weight_A * np.array(prob_vector_A) + weight_B * np.array(prob_vector_B)) / (weight_A + weight_B)
+    return fused_probability_vector
+
+# 两个模型的分类概率向量（示例中有3个类别）
+prob_vector_model_A = [0.2, 0.5, 0.3]
+prob_vector_model_B = [0.4, 0.3, 0.3]
+
+# 两个模型的权重
+weight_model_A = 0.7
+weight_model_B = 0.3
+
+# 调用贝叶斯融合函数
+result_probability_vector = bayesian_fusion_probability_vector(prob_vector_model_A, prob_vector_model_B, weight_model_A, weight_model_B)
+
+

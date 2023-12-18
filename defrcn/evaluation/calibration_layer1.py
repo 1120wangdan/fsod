@@ -1,5 +1,3 @@
-#3*3=9个特征向量和180个原型求相似度
-
 import os
 import cv2
 import json
@@ -33,11 +31,10 @@ class PrototypicalCalibrationBlock:
         self.alpha = self.cfg.TEST.PCB_ALPHA
 
         self.imagenet_model = self.build_model()
-        # Detectron2 库提供的一个函数，用于构建目标检测任务的测试数据加载器。该函数接受两个参数，一个是配置对象 self.cfg，另一个是要加载的数据集的名称。
         self.dataloader = build_detection_test_loader(self.cfg, self.cfg.DATASETS.TRAIN[0])
-        #debug改成了1到3
+        
         self.roi_pooler = ROIPooler(output_size=(3, 3), scales=(1 / 32,), sampling_ratio=(0), pooler_type="ROIAlignV2")
-        # self.roi_pooler1 = ROIPooler(output_size=(1, 1), scales=(1 / 32,), sampling_ratio=(0), pooler_type="ROIAlignV2")
+        self.roi_pooler1 = ROIPooler(output_size=(1, 1), scales=(1 / 32,), sampling_ratio=(0), pooler_type="ROIAlignV2")
         self.prototypes = self.build_prototypes()
 
         self.exclude_cls = self.clsid_filter()
@@ -166,7 +163,7 @@ class PrototypicalCalibrationBlock:
 
         #卷积特征-ROI特征-ROI特征向量
         conv_feature = self.imagenet_model(images.tensor[:, [2, 1, 0]])[1]  # size: BxCxHxW
-        
+        box_features = self.roi_pooler([conv_feature], boxes)
 
         box_features = self.roi_pooler([conv_feature], boxes) #移除指定维度
 
@@ -176,31 +173,31 @@ class PrototypicalCalibrationBlock:
 
 
 
-    # def extract_roi_features_vector(self, img, boxes):
-    #         """
-    #         :param img:
-    #         :param boxes:
-    #         :return:
-    #         """
+    def extract_roi_features_vector(self, img, boxes):
+            """
+            :param img:
+            :param boxes:
+            :return:
+            """
 
-    #         mean = torch.tensor([0.406, 0.456, 0.485]).reshape((3, 1, 1)).to(self.device)
-    #         std = torch.tensor([[0.225, 0.224, 0.229]]).reshape((3, 1, 1)).to(self.device)
+            mean = torch.tensor([0.406, 0.456, 0.485]).reshape((3, 1, 1)).to(self.device)
+            std = torch.tensor([[0.225, 0.224, 0.229]]).reshape((3, 1, 1)).to(self.device)
 
-    #         img = img.transpose((2, 0, 1))
-    #         img = torch.from_numpy(img).to(self.device)
-    #         images = [(img / 255. - mean) / std]  
-    #         images = ImageList.from_tensors(images, 0)
+            img = img.transpose((2, 0, 1))
+            img = torch.from_numpy(img).to(self.device)
+            images = [(img / 255. - mean) / std]  
+            images = ImageList.from_tensors(images, 0)
 
-    #         #卷积特征-ROI特征-ROI特征向量
-    #         conv_feature = self.imagenet_model(images.tensor[:, [2, 1, 0]])[1]  # size: BxCxHxW
-    #         # box_features = self.roi_pooler([conv_feature], boxes)
+            #卷积特征-ROI特征-ROI特征向量
+            conv_feature = self.imagenet_model(images.tensor[:, [2, 1, 0]])[1]  # size: BxCxHxW
+            # box_features = self.roi_pooler([conv_feature], boxes)
 
-    #         #移除指定维度
-    #         box_features = self.roi_pooler1([conv_feature], boxes).squeeze(2).squeeze(2) 
+            #移除指定维度
+            box_features = self.roi_pooler1([conv_feature], boxes).squeeze(2).squeeze(2) 
 
-    #         # activation_vectors = self.imagenet_model.fc(box_features)
+            # activation_vectors = self.imagenet_model.fc(box_features)
 
-    #         return box_features  
+            return box_features  
     
      #PCB执行，求相似度、
      #extract_roi_features(img, boxes)的两个参数，一个来自原始图像，一个来自预测的候选框
@@ -214,60 +211,29 @@ class PrototypicalCalibrationBlock:
         assert ileft <= iright
         boxes = [dts[0]['instances'].pred_boxes[ileft:iright]]
 
-        features = self.extract_roi_features(img, boxes)
+        features = self.extract_roi_features_vector(img, boxes)
         
         #i是框的索引吗 原论文也只和自己对应的类求相似度 
         for i in range(ileft, iright):
-            # tmp_class = int(dts[0]['instances'].pred_classes[i])
-            # if tmp_class in self.exclude_cls:
-            #     continue 
-            similarity_scores = []
-            similarity_labels = []
+            tmp_class = int(dts[0]['instances'].pred_classes[i])
+            if tmp_class in self.exclude_cls:
+                continue 
+            
+            #原型和候选框的特征作度量 
+           
+            tmp_cos = -1  # 初始化为一个较小的值，确保能够找到最大的余弦相似度
 
-            for k in range(9):
-                cos_sim_list = []
-                for label, prototypes_list in self.prototypes.items():
-                    for j in range(10):
-                        cos_sim = cosine_similarity(
-                            np.reshape(features[i - ileft].reshape(9, 2048)[k].cpu().data.numpy(), (1, -1)),
-                            np.reshape(prototypes_list[j].cpu().data.numpy(), (1, -1))
-                        )[0][0]
-                        cos_sim_list.append(cos_sim)
-
-                #里面两层循环得到一个2048的特征向量和200个原型的相似度
-
-                max_sim = max(cos_sim_list)
-                max_sim_index = cos_sim_list.index(max_sim)
-                max_sim_label = list(self.prototypes.keys())[max_sim_index // 10]
-
-                similarity_scores.append(max_sim)
-                similarity_labels.append(max_sim_label)
-
-
-            #三层循环结束后得到了长度为k=9的相似度列表，
-            # 统计每个类别出现的次数
-            label_counts = {}
-            for label in similarity_labels:
-                if label in label_counts:
-                    label_counts[label] += 1
-                else:
-                    label_counts[label] = 1
-
-
-            # 找出出现次数最多的类别
-            max_count = max(label_counts.values())
-            most_frequent_label = [label for label, count in label_counts.items() if count == max_count][0]
-
-            # 筛选出现次数最多的相似度
-            most_frequent_scores = [score for score, label in zip(similarity_scores, similarity_labels) if label in most_frequent_label]
-
-            # 计算平均相似度
-            average_similarity = sum(most_frequent_scores) / len(most_frequent_scores)
-
-            # 将分类结果和分类得分记录下来
-            dts[0]['instances'].pred_classes[i] = most_frequent_label  # 取出现次数最多的第一个类别作为预测结果
-            dts[0]['instances'].scores[i] = average_similarity
-        return dts
+            for j in range(10):
+                cos_sim = cosine_similarity(
+                    np.reshape(features[i - ileft].cpu().data.numpy(), (1, -1)),  #
+                    np.reshape(self.prototypes[tmp_class][j].cpu().data.numpy(), (1, -1))   #2048
+                )[0][0]
+                
+                if cos_sim > tmp_cos:
+                    tmp_cos = cos_sim
+            
+            dts[0]['instances'].scores[i] = dts[0]['instances'].scores[i] * self.alpha + tmp_cos * (1 - self.alpha)
+        return dts    
 
     #根据数据集名称返回一组需要排除的类别 ID 
     def clsid_filter(self):

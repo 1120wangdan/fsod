@@ -1,4 +1,4 @@
-#3*3=9个特征向量和180个原型求相似度
+
 
 import os
 import cv2
@@ -33,7 +33,6 @@ class PrototypicalCalibrationBlock:
         self.alpha = self.cfg.TEST.PCB_ALPHA
 
         self.imagenet_model = self.build_model()
-        # Detectron2 库提供的一个函数，用于构建目标检测任务的测试数据加载器。该函数接受两个参数，一个是配置对象 self.cfg，另一个是要加载的数据集的名称。
         self.dataloader = build_detection_test_loader(self.cfg, self.cfg.DATASETS.TRAIN[0])
         #debug改成了1到3
         self.roi_pooler = ROIPooler(output_size=(3, 3), scales=(1 / 32,), sampling_ratio=(0), pooler_type="ROIAlignV2")
@@ -105,10 +104,10 @@ class PrototypicalCalibrationBlock:
             features_dict[label].append(all_features[i].unsqueeze(0))  
             # 将特征张量列表转换为张量
 
-        num_classes = len(features_dict)  # 类别的数量
-        num_prototype=10
-        in_channels=2048
-        prototypes = torch.zeros(num_classes, num_prototype, in_channels)  # 事先定义好的原型张量
+        # num_classes = len(features_dict)  # 类别的数量
+        # num_prototype=5
+        # in_channels=2048
+        #prototypes = torch.zeros(num_classes, num_prototype, in_channels)  # 事先定义好的原型张量
 
         index_to_label = {}  # 建立索引和类别标签之间的映射关系
         prototypes = {}
@@ -168,11 +167,33 @@ class PrototypicalCalibrationBlock:
         conv_feature = self.imagenet_model(images.tensor[:, [2, 1, 0]])[1]  # size: BxCxHxW
         
 
-        box_features = self.roi_pooler([conv_feature], boxes) #移除指定维度
+        box_features = self.roi_pooler([conv_feature], boxes) 
+        box_features = box_features.view(2048, -1)
+        # 初始化activation_vectors列表
+        activation_vectors = []
+
+        # 遍历box_features中的每个向量
+        for i in range(box_features.size(1)):
+            # 获取当前向量
+            # vector = box_features[i]
+            vector = box_features[:, i]
+            
+            # 将向量通过全连接层
+            output = self.imagenet_model.fc(vector)
+            
+            # 将输出添加到activation_vectors列表中
+            activation_vectors.append(output)
+
+        # 将activation_vectors转换为张量
+        activation_vectors = torch.stack(activation_vectors)
 
         # activation_vectors = self.imagenet_model.fc(box_features)
+        activation_vectors_transposed = activation_vectors.t()
 
-        return box_features    
+# 将activation_vectors_transposed转换为(1000, 3, 3)
+        activation_vectors_final = activation_vectors_transposed.view(1000, 3, 3)
+
+        return activation_vectors_final   
 
 
 
@@ -229,7 +250,7 @@ class PrototypicalCalibrationBlock:
                 for label, prototypes_list in self.prototypes.items():
                     for j in range(10):
                         cos_sim = cosine_similarity(
-                            np.reshape(features[i - ileft].reshape(9, 2048)[k].cpu().data.numpy(), (1, -1)),
+                            np.reshape(features[i - ileft].reshape(9, 1000)[k].cpu().data.numpy(), (1, -1)),
                             np.reshape(prototypes_list[j].cpu().data.numpy(), (1, -1))
                         )[0][0]
                         cos_sim_list.append(cos_sim)
@@ -267,6 +288,8 @@ class PrototypicalCalibrationBlock:
             # 将分类结果和分类得分记录下来
             dts[0]['instances'].pred_classes[i] = most_frequent_label  # 取出现次数最多的第一个类别作为预测结果
             dts[0]['instances'].scores[i] = average_similarity
+            
+ 
         return dts
 
     #根据数据集名称返回一组需要排除的类别 ID 
@@ -314,7 +337,7 @@ def momentum_update(old_value, new_value, momentum, debug=False):
 
 #_c是同一个类的roi_feature,b c h w
 def prototype_learning(_c):
-     in_channels = 2048
+     in_channels = 1000
      num_prototype = 10
      protos = torch.zeros(num_prototype, in_channels)
      old_protos = torch.zeros(num_prototype, in_channels)
